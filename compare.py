@@ -2,6 +2,7 @@ import pandas as pd
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.utils import get_column_letter
 
 TICKET_MAP = {
     '全票':           '全票',
@@ -112,8 +113,8 @@ def compare(df_ay: pd.DataFrame, df_vs: pd.DataFrame) -> dict:
                       how='outer', indicator=True)
 
     both     = merged[merged['_merge'] == 'both'].copy()
-    only_ay  = merged[merged['_merge'] == 'left_only'].copy()
-    only_vs  = merged[merged['_merge'] == 'right_only'].copy()
+    only_ay  = merged[merged['_merge'] == 'left_only'][['area', 'ticket_ay', 'ticket_std', 'price_ay']].copy()
+    only_vs  = merged[merged['_merge'] == 'right_only'][['area', 'ticket_vs', 'ticket_std', 'price_vs']].copy()
 
     return {
         'price_ok':   both[both['price_ay'] == both['price_vs']].copy(),
@@ -135,8 +136,8 @@ def generate_excel(result: dict) -> bytes:
     HFILL  = PatternFill('solid', fgColor='4472C4')
 
     def write_sheet(ws, df, cols, col_names, fill, title, col_widths):
-        for col_letter, w in zip('ABCDEFG', col_widths):
-            ws.column_dimensions[col_letter].width = w
+        for i, w in enumerate(col_widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
         r = 1
         ws.cell(r, 1, title).font = Font(bold=True, size=11, color='FFFFFF')
         ws.cell(r, 1).fill = HFILL
@@ -206,8 +207,12 @@ def generate_excel(result: dict) -> bytes:
 
     if len(price_ok) > 0:
         ws = wb.create_sheet('✅完全相符')
-        write_sheet(ws, price_ok.sort_values(['ticket_std', 'area']),
-            ['area', 'ticket_vs', 'ticket_ay', 'price_vs'],
+        ok_display = (price_ok.sort_values(['ticket_std', 'area'])
+                              [['area', 'ticket_vs', 'ticket_ay', 'price_vs']]
+                              .copy()
+                              .rename(columns={'price_vs': 'price'}))
+        write_sheet(ws, ok_display,
+            ['area', 'ticket_vs', 'ticket_ay', 'price'],
             ['區域名稱', '廠商票種', '安源票種', '票價'],
             GREEN, f'✅ 票價完全相符 ({len(price_ok)}筆)', [42, 22, 22, 12])
 
