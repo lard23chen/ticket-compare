@@ -46,13 +46,26 @@ def main_page():
         st.info('請上傳兩份 Excel 檔案後繼續')
         return
 
-    with st.spinner('讀取檔案中...'):
-        try:
-            ay_data = parse_ansource(ay_file)
-            vs_data = parse_vendor(vs_file)
-        except Exception as e:
-            st.error(f'檔案讀取失敗：{e}')
-            return
+    ay_key = f'ay_{ay_file.name}'
+    vs_key = f'vs_{vs_file.name}'
+    if ay_key not in st.session_state or vs_key not in st.session_state:
+        with st.spinner('讀取檔案中...'):
+            try:
+                st.session_state[ay_key] = parse_ansource(ay_file)
+                st.session_state[vs_key] = parse_vendor(vs_file)
+            except Exception as e:
+                st.error(f'檔案讀取失敗：{e}')
+                return
+    ay_data = st.session_state[ay_key]
+    vs_data = st.session_state[vs_key]
+
+    if 'compare_result' in st.session_state:
+        # Clear cached compare result if files have changed
+        result_key = st.session_state.get('compare_files_key')
+        current_key = f'{ay_file.name}_{vs_file.name}'
+        if result_key != current_key:
+            del st.session_state['compare_result']
+    st.session_state['compare_files_key'] = f'{ay_file.name}_{vs_file.name}'
 
     st.markdown('---')
     st.subheader('② 選擇比對場次')
@@ -65,8 +78,9 @@ def main_page():
     st.markdown('---')
     if st.button('🔍 開始比對', type='primary'):
         with st.spinner('比對中...'):
-            result = compare(ay_data[ay_choice], vs_data[vs_choice])
-        _show_results(result)
+            st.session_state['compare_result'] = compare(ay_data[ay_choice], vs_data[vs_choice])
+    if 'compare_result' in st.session_state:
+        _show_results(st.session_state['compare_result'])
 
 
 def _show_results(result: dict):
@@ -104,14 +118,17 @@ def _show_results(result: dict):
             st.dataframe(u, use_container_width=True, hide_index=True)
 
     st.markdown('---')
-    excel_bytes = generate_excel(result)
-    st.download_button(
-        label='📥 下載 Excel 報告',
-        data=excel_bytes,
-        file_name='票價比對結果.xlsx',
-        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        type='primary',
-    )
+    try:
+        excel_bytes = generate_excel(result)
+        st.download_button(
+            label='📥 下載 Excel 報告',
+            data=excel_bytes,
+            file_name='票價比對結果.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            type='primary',
+        )
+    except Exception as e:
+        st.error(f'Excel 報告產生失敗：{e}')
 
 
 def main():
