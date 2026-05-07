@@ -94,3 +94,123 @@ def parse_vendor(file) -> dict:
         df = df.drop_duplicates()
         result[sheet] = df
     return result
+
+
+def compare(df_ay: pd.DataFrame, df_vs: pd.DataFrame) -> dict:
+    """比對安源與廠商資料，回傳分類結果 dict"""
+    df_ay = df_ay.copy()
+    df_ay['ticket_std'] = df_ay['ticket'].map(TICKET_MAP)
+
+    ay_m = (df_ay[df_ay['ticket_std'].notna()]
+            [['area', 'ticket', 'ticket_std', 'price']]
+            .rename(columns={'price': 'price_ay', 'ticket': 'ticket_ay'}))
+
+    vs_m = (df_vs[['area', 'ticket_vs', 'ticket_std', 'price']]
+            .rename(columns={'price': 'price_vs'}))
+
+    merged = pd.merge(ay_m, vs_m, on=['area', 'ticket_std'],
+                      how='outer', indicator=True)
+
+    both     = merged[merged['_merge'] == 'both'].copy()
+    only_ay  = merged[merged['_merge'] == 'left_only'].copy()
+    only_vs  = merged[merged['_merge'] == 'right_only'].copy()
+
+    return {
+        'price_ok':   both[both['price_ay'] == both['price_vs']].copy(),
+        'price_diff': both[both['price_ay'] != both['price_vs']].copy(),
+        'only_ay':    only_ay,
+        'only_vs':    only_vs,
+        'unmapped':   df_ay[df_ay['ticket_std'].isna()][['area', 'ticket', 'price']].copy(),
+    }
+
+
+def generate_excel(result: dict) -> bytes:
+    """將比對結果產出為 Excel bytes（in-memory，不落地）"""
+    wb = Workbook()
+    GREEN  = PatternFill('solid', fgColor='C6EFCE')
+    RED    = PatternFill('solid', fgColor='FFC7CE')
+    ORANGE = PatternFill('solid', fgColor='FFEB9C')
+    BLUE   = PatternFill('solid', fgColor='BDD7EE')
+    GRAY   = PatternFill('solid', fgColor='D9D9D9')
+    HFILL  = PatternFill('solid', fgColor='4472C4')
+
+    def write_sheet(ws, df, cols, col_names, fill, title, col_widths):
+        for col_letter, w in zip('ABCDEFG', col_widths):
+            ws.column_dimensions[col_letter].width = w
+        r = 1
+        ws.cell(r, 1, title).font = Font(bold=True, size=11, color='FFFFFF')
+        ws.cell(r, 1).fill = HFILL
+        ws.merge_cells(start_row=r, start_column=1,
+                       end_row=r, end_column=len(cols))
+        ws.cell(r, 1).alignment = Alignment(horizontal='center')
+        r += 1
+        for c, name in enumerate(col_names, 1):
+            cell = ws.cell(r, c, name)
+            cell.font = Font(bold=True)
+            cell.fill = GRAY
+            cell.alignment = Alignment(horizontal='center')
+        r += 1
+        for row in df[cols].itertuples(index=False):
+            for c, val in enumerate(row, 1):
+                ws.cell(r, c, val).fill = fill
+            r += 1
+
+    price_ok   = result['price_ok']
+    price_diff = result['price_diff']
+    only_ay    = result['only_ay']
+    only_vs    = result['only_vs']
+    unmapped   = result['unmapped']
+
+    # 摘要
+    ws0 = wb.active
+    ws0.title = '摘要'
+    ws0.column_dimensions['A'].width = 38
+    ws0.column_dimensions['B'].width = 12
+    for r, (label, count, fill) in enumerate([
+        ('✅ 票價完全相符',      len(price_ok),   GREEN),
+        ('❌ 票價不符',          len(price_diff), RED),
+        ('⚠️ 廠商有、安源沒有',  len(only_vs),    ORANGE),
+        ('⚠️ 安源有、廠商沒有',  len(only_ay),    ORANGE),
+        ('ℹ️ 安源票種無對應廠商', len(unmapped),  BLUE),
+    ], 1):
+        ws0.cell(r, 1, label).fill = fill
+        ws0.cell(r, 2, count).fill = fill
+
+    if len(price_diff) > 0:
+        ws = wb.create_sheet('❌票價不符')
+        write_sheet(ws, price_diff.sort_values(['ticket_std', 'area']),
+            ['area', 'ticket_vs', 'ticket_ay', 'price_vs', 'price_ay'],
+            ['區域名稱', '廠商票種', '安源票種', '廠商票價', '安源票價'],
+            RED, f'❌ 票價不符 ({len(price_diff)}筆)', [42, 20, 20, 12, 12])
+
+    if len(only_vs) > 0:
+        ws = wb.create_sheet('⚠️廠商有安源無')
+        write_sheet(ws, only_vs.sort_values(['ticket_std', 'area']),
+            ['area', 'ticket_vs', 'price_vs'],
+            ['區域名稱', '廠商票種', '廠商票價'],
+            ORANGE, f'⚠️ 廠商有、安源沒有 ({len(only_vs)}筆)', [42, 22, 12])
+
+    if len(only_ay) > 0:
+        ws = wb.create_sheet('⚠️安源有廠商無')
+        write_sheet(ws, only_ay.sort_values(['area', 'ticket_ay']),
+            ['area', 'ticket_ay', 'price_ay'],
+            ['區域名稱', '安源票種', '安源票價'],
+            ORANGE, f'⚠️ 安源有、廠商沒有 ({len(only_ay)}筆)', [42, 22, 12])
+
+    if len(unmapped) > 0:
+        ws = wb.create_sheet('ℹ️安源無對應')
+        write_sheet(ws, unmapped.sort_values(['ticket', 'area']),
+            ['area', 'ticket', 'price'],
+            ['區域名稱', '安源票種', '安源票價'],
+            BLUE, f'ℹ️ 安源票種無對應廠商 ({len(unmapped)}筆)', [42, 22, 12])
+
+    if len(price_ok) > 0:
+        ws = wb.create_sheet('✅完全相符')
+        write_sheet(ws, price_ok.sort_values(['ticket_std', 'area']),
+            ['area', 'ticket_vs', 'ticket_ay', 'price_vs'],
+            ['區域名稱', '廠商票種', '安源票種', '票價'],
+            GREEN, f'✅ 票價完全相符 ({len(price_ok)}筆)', [42, 22, 22, 12])
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
