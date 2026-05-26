@@ -1,6 +1,3 @@
-import sys, os
-sys.path.insert(0, os.path.dirname(__file__))  # ensure flexible/ is on path when run from repo root
-
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -90,7 +87,7 @@ def main():
     preview_df.columns = [_col_label(i, columns) for i in range(n_cols)]
     st.dataframe(preview_df, use_container_width=True)
 
-    # Warn if no keywords found (all col indices are None)
+    # Warn if required columns not fully detected
     if detected['area_col'] is None or detected['price_col'] is None:
         st.warning('⚠️ 未完整偵測到欄位，請手動確認「區域欄」與「票價欄」')
 
@@ -140,7 +137,6 @@ def main():
                     )
                     st.session_state['vs_data'] = vs_df
                     st.session_state['vs_sheet_label'] = selected_sheet
-                    # Clear stale compare result when vendor data changes
                     st.session_state.pop('compare_result', None)
                     data_rows = len(df_raw) - detected['header_row'] - 1
                     skipped = max(0, data_rows - len(vs_df))

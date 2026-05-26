@@ -109,10 +109,14 @@ def compare(df_ay: pd.DataFrame, df_vs: pd.DataFrame) -> dict:
     vs_m = (df_vs[['area', 'ticket_vs', 'ticket_std', 'price']]
             .rename(columns={'price': 'price_vs'}))
 
+    # Ensure ticket_std dtype is consistent to avoid merge errors on empty DataFrames
+    ay_m = ay_m.copy(); ay_m['ticket_std'] = ay_m['ticket_std'].astype(object)
+    vs_m = vs_m.copy(); vs_m['ticket_std'] = vs_m['ticket_std'].astype(object)
+
     merged = pd.merge(ay_m, vs_m, on=['area', 'ticket_std'],
                       how='outer', indicator=True)
 
-    both     = merged[merged['_merge'] == 'both'].copy()
+    both     = merged[merged['_merge'] == 'both'].drop(columns='_merge').copy()
     only_ay  = merged[merged['_merge'] == 'left_only'][['area', 'ticket_ay', 'ticket_std', 'price_ay']].copy()
     only_vs  = merged[merged['_merge'] == 'right_only'][['area', 'ticket_vs', 'ticket_std', 'price_vs']].copy()
 
