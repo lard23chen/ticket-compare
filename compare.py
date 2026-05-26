@@ -4,7 +4,8 @@ from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
-TICKET_MAP = {
+# ── 基礎票種對照（各隊通用）────────────────────────────
+TICKET_MAP_BASE = {
     '全票':           '全票',
     '貴賓券':          '貴賓券',
     '公關票':          '公關票',
@@ -16,8 +17,28 @@ TICKET_MAP = {
     '外野身心優惠票':   '身心優惠票',
     '內野半票':         '半票',
     '外野半票':         '半票',
-    '統一獅會員優惠票':  '會員優惠票(折100)',
 }
+
+# ── 統一獅專屬票種 ─────────────────────────────────────
+TICKET_MAP_LIONS = {
+    **TICKET_MAP_BASE,
+    '統一獅會員優惠票':    '會員優惠票(折100)',
+    '統一卡優惠票':         '會員優惠票(折100)',
+    '統一集團員工票':       '員工票',
+    '統一超商優惠票':       '超商優惠票',
+    '友好票':               '友好票',
+    '內野記者票':           '記者票',
+    '外野記者票':           '記者票',
+}
+
+# ── 各球隊 MAP 總表（新增球隊在此擴充）─────────────────
+TICKET_MAPS = {
+    '統一獅':   TICKET_MAP_LIONS,
+    '通用':     TICKET_MAP_BASE,
+}
+
+# 向後相容
+TICKET_MAP = TICKET_MAP_LIONS
 
 
 def parse_ansource(file) -> dict:

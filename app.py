@@ -1,49 +1,24 @@
 import streamlit as st
-from compare import parse_ansource, parse_vendor, compare, generate_excel
+from compare import parse_ansource, parse_vendor, compare, generate_excel, TICKET_MAPS
 
 st.set_page_config(page_title='票價比對工具', page_icon='🎫', layout='wide')
 
 
-def check_login(username: str, password: str) -> bool:
-    return (username == st.secrets['auth']['username'] and
-            password == st.secrets['auth']['password'])
-
-
-def login_page():
-    st.title('🎫 票價比對工具')
-    st.subheader('請登入')
-    with st.form('login_form'):
-        username = st.text_input('帳號')
-        password = st.text_input('密碼', type='password')
-        submitted = st.form_submit_button('登入', type='primary')
-    if submitted:
-        if check_login(username, password):
-            st.session_state['logged_in'] = True
-            st.rerun()
-        else:
-            st.error('帳號或密碼錯誤，請重試')
-
-
 def main_page():
-    col_title, col_logout = st.columns([8, 1])
-    with col_title:
-        st.title('🎫 票價比對工具')
-    with col_logout:
-        st.write('')
-        if st.button('登出'):
-            st.session_state['logged_in'] = False
-            st.rerun()
-
+    st.title('🎫 票價比對工具')
     st.markdown('---')
-    st.subheader('① 上傳檔案')
-    col1, col2 = st.columns(2)
+
+    st.subheader('① 選擇球隊 & 上傳檔案')
+    col0, col1, col2 = st.columns([2, 3, 3])
+    with col0:
+        team = st.selectbox('球隊', list(TICKET_MAPS.keys()))
     with col1:
         ay_file = st.file_uploader('安源 .xls', type=['xls'])
     with col2:
         vs_file = st.file_uploader('廠商 .xlsx', type=['xlsx'])
 
     if not (ay_file and vs_file):
-        st.info('請上傳兩份 Excel 檔案後繼續')
+        st.info('請選擇球隊並上傳兩份 Excel 檔案後繼續')
         return
 
     ay_key = f'ay_{ay_file.name}'
@@ -59,13 +34,10 @@ def main_page():
     ay_data = st.session_state[ay_key]
     vs_data = st.session_state[vs_key]
 
-    if 'compare_result' in st.session_state:
-        # Clear cached compare result if files have changed
-        result_key = st.session_state.get('compare_files_key')
-        current_key = f'{ay_file.name}_{vs_file.name}'
-        if result_key != current_key:
-            del st.session_state['compare_result']
-    st.session_state['compare_files_key'] = f'{ay_file.name}_{vs_file.name}'
+    current_key = f'{team}_{ay_file.name}_{vs_file.name}'
+    if st.session_state.get('compare_files_key') != current_key:
+        st.session_state.pop('compare_result', None)
+    st.session_state['compare_files_key'] = current_key
 
     st.markdown('---')
     st.subheader('② 選擇比對場次')
@@ -78,7 +50,11 @@ def main_page():
     st.markdown('---')
     if st.button('🔍 開始比對', type='primary'):
         with st.spinner('比對中...'):
-            st.session_state['compare_result'] = compare(ay_data[ay_choice], vs_data[vs_choice])
+            ticket_map = TICKET_MAPS[team]
+            st.session_state['compare_result'] = compare(
+                ay_data[ay_choice], vs_data[vs_choice],
+                ticket_map=ticket_map,
+            )
     if 'compare_result' in st.session_state:
         _show_results(st.session_state['compare_result'])
 
@@ -131,14 +107,5 @@ def _show_results(result: dict):
         st.error(f'Excel 報告產生失敗：{e}')
 
 
-def main():
-    if 'logged_in' not in st.session_state:
-        st.session_state['logged_in'] = False
-    if st.session_state['logged_in']:
-        main_page()
-    else:
-        login_page()
-
-
 if __name__ == '__main__':
-    main()
+    main_page()
