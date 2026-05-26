@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from ticket_parser import parse_ansource, list_sheets, detect_header, extract_vendor
+from ticket_parser import parse_ansource, list_sheets, detect_header, extract_vendor, extract_vendor_wide
 from compare import compare, generate_excel
 
 st.set_page_config(page_title='彈性票價比對工具', page_icon='🎫', layout='wide')
@@ -126,15 +126,24 @@ def main():
     price_idx  = None if price_sel  == NONE_LABEL else price_sel
 
     if st.button('✅ 確認並提取廠商資料', type='primary'):
-        if area_idx is None or price_idx is None:
+        is_wide = detected.get('wide_format') and detected.get('sub_header_row') is not None
+        if area_idx is None:
+            st.error('❌ 請至少指定「區域欄」')
+        elif not is_wide and price_idx is None:
             st.error('❌ 請至少指定「區域欄」和「票價欄」')
         else:
             with st.spinner('提取中...'):
                 try:
-                    vs_df = extract_vendor(
-                        df_raw, detected['header_row'],
-                        area_idx, ticket_idx, price_idx
-                    )
+                    if is_wide:
+                        vs_df = extract_vendor_wide(
+                            df_raw, detected['header_row'],
+                            area_idx, detected['sub_header_row']
+                        )
+                    else:
+                        vs_df = extract_vendor(
+                            df_raw, detected['header_row'],
+                            area_idx, ticket_idx, price_idx
+                        )
                     st.session_state['vs_data'] = vs_df
                     st.session_state['vs_sheet_label'] = selected_sheet
                     st.session_state.pop('compare_result', None)

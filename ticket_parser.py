@@ -87,6 +87,8 @@ def detect_header(df_raw: pd.DataFrame) -> dict:
             'ticket_col': int | None,
             'price_col':  int | None,
             'columns':    list[str],    # cell values of header row (for UI dropdowns)
+            'wide_format':    bool,     # True when ticket types are column headers (next row)
+            'sub_header_row': int|None, # row index of the ticket-type sub-header (wide format)
         }
 
     If no keywords are found in the first 20 rows, falls back to row 0 with
@@ -94,7 +96,8 @@ def detect_header(df_raw: pd.DataFrame) -> dict:
     """
     if len(df_raw) == 0:
         return {'header_row': 0, 'area_col': None, 'ticket_col': None,
-                'price_col': None, 'columns': []}
+                'price_col': None, 'columns': [], 'wide_format': False,
+                'sub_header_row': None}
 
     scan_limit = min(20, len(df_raw))
     best_row, best_score = 0, 0
@@ -122,8 +125,23 @@ def detect_header(df_raw: pd.DataFrame) -> dict:
         elif t == 'area' and area_col is None:
             area_col = col_idx
 
-    # Fallback: detect price_col by numeric column content
-    if price_col is None:
+    # ── 雙層標題（寬格式）偵測 ────────────────────────────────────────────────
+    # 若 ticket_col 未偵測到，但 best_row+1 存在且下一列有 ≥2 個非空字串（無 keyword）
+    # → 判定為「票種子標題列（wide format）」，設 wide_format=True。
+    wide_format = False
+    sub_header_row = None
+    next_row_idx = best_row + 1
+    if ticket_col is None and next_row_idx < len(df_raw):
+        next_row = df_raw.iloc[next_row_idx]
+        next_vals = [str(v).strip() for v in next_row if pd.notna(v) and str(v).strip()]
+        next_kw_hits = sum(1 for v in next_vals if any(kw in v for kw in _ALL_KW))
+        if len(next_vals) >= 2 and next_kw_hits == 0:
+            wide_format = True
+            sub_header_row = next_row_idx
+    # ── end 寬格式偵測 ────────────────────────────────────────────────────────
+
+    # Fallback: detect price_col by numeric column content (skip if wide_format)
+    if price_col is None and not wide_format:
         data_sample = df_raw.iloc[best_row + 1: best_row + 11]
         for col_idx in range(len(df_raw.columns)):
             col_data = data_sample.iloc[:, col_idx]
@@ -134,11 +152,13 @@ def detect_header(df_raw: pd.DataFrame) -> dict:
                 break
 
     return {
-        'header_row': best_row,
-        'area_col':   area_col,
-        'ticket_col': ticket_col,
-        'price_col':  price_col,
-        'columns':    columns,
+        'header_row':    best_row,
+        'area_col':      area_col,
+        'ticket_col':    ticket_col,
+        'price_col':     price_col,
+        'columns':       columns,
+        'wide_format':   wide_format,
+        'sub_header_row': sub_header_row,
     }
 
 
@@ -192,5 +212,62 @@ def extract_vendor(
     df['ticket_std'] = (df['ticket_vs']
                         .str.replace(r'\(不顯示\)', '', regex=True)
                         .str.strip())
+
+    return df[['area', 'ticket_vs', 'ticket_std', 'price']].drop_duplicates().reset_index(drop=True)
+
+
+def extract_vendor_wide(
+    df_raw: pd.DataFrame,
+    header_row: int,
+    area_col: int,
+    sub_header_row: int,
+    exclude_zero_price: bool = True,
+) -> pd.DataFrame:
+    """寬格式廠商資料提取（票種名稱為欄位標題，每區域一列含多個票價欄）。
+
+    適用於雙層標題格式：
+        header_row:      含「區域欄」標題的主標題列
+        sub_header_row:  含票種名稱（全票/半票/…）的子標題列
+        area_col:        區域名稱所在欄索引（來自 header_row 偵測）
+        exclude_zero_price: True → 過濾 price=0 的隱藏票種（不顯示）
+
+    Returns:
+        DataFrame with columns: area, ticket_vs, ticket_std, price
+    """
+    # 讀出票種列：找出 sub_header_row 中有值的欄位
+    sub_row = df_raw.iloc[sub_header_row]
+    ticket_cols = [c for c in range(len(sub_row))
+                   if pd.notna(sub_row[c]) and str(sub_row[c]).strip() != '']
+    ticket_types = [str(sub_row[c]).strip() for c in ticket_cols]
+
+    # 資料從 sub_header_row+1 開始
+    data = df_raw.iloc[sub_header_row + 1:].copy().reset_index(drop=True)
+
+    # 建立寬格式 DataFrame：area + 各票種欄
+    avail = [c for c in [area_col] + ticket_cols if c < data.shape[1]]
+    df_wide = data[avail].copy()
+    df_wide.columns = ['area'] + ticket_types[:len(avail) - 1]
+
+    # ffill 合併欄的區域名稱
+    df_wide['area'] = df_wide['area'].ffill()
+    df_wide = df_wide.dropna(subset=['area'])
+    df_wide['area'] = df_wide['area'].astype(str).str.strip()
+    df_wide = df_wide[~df_wide['area'].isin(['', 'nan'])]
+
+    # Melt 轉長格式
+    df = df_wide.melt(id_vars=['area'], var_name='ticket_vs', value_name='price_raw')
+    df = df[df['price_raw'] != '-'].dropna(subset=['price_raw'])
+    df['price'] = pd.to_numeric(df['price_raw'], errors='coerce')
+    df = df.dropna(subset=['price'])
+    df['price'] = df['price'].astype(int)
+
+    # 過濾 price=0 的隱藏票種
+    if exclude_zero_price:
+        df = df[df['price'] > 0]
+
+    df['ticket_std'] = (df['ticket_vs']
+                        .str.replace(r'\(不顯示\)', '', regex=True)
+                        .str.strip())
+    df = df[~df['ticket_vs'].isin(['', 'nan'])]
 
     return df[['area', 'ticket_vs', 'ticket_std', 'price']].drop_duplicates().reset_index(drop=True)

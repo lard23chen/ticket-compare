@@ -89,6 +89,8 @@ def parse_vendor(file) -> dict:
         df['price'] = pd.to_numeric(df['price'], errors='coerce')
         df = df.dropna(subset=['price'])
         df['price'] = df['price'].astype(int)
+        # 過濾 price=0 的隱藏票種（標記為「不顯示」者售價為 0，不應納入比對）
+        df = df[df['price'] > 0]
         df['ticket_std'] = (df['ticket_vs']
                             .str.replace(r'\(不顯示\)', '', regex=True)
                             .str.strip())
