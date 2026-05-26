@@ -1,5 +1,7 @@
 import streamlit as st
-from compare import parse_ansource, parse_vendor, compare, generate_excel, TICKET_MAPS
+from compare import (parse_ansource, parse_vendor, parse_vendor_rakuten,
+                     compare, generate_excel, TICKET_MAPS,
+                     _canon_area_rakuten_ay)
 
 st.set_page_config(page_title='票價比對工具', page_icon='🎫', layout='wide')
 
@@ -21,13 +23,17 @@ def main_page():
         st.info('請選擇球隊並上傳兩份 Excel 檔案後繼續')
         return
 
+    is_rakuten = team.startswith('樂天')
     ay_key = f'ay_{ay_file.name}'
-    vs_key = f'vs_{vs_file.name}'
+    vs_key = f'vs_{team}_{vs_file.name}'
     if ay_key not in st.session_state or vs_key not in st.session_state:
         with st.spinner('讀取檔案中...'):
             try:
                 st.session_state[ay_key] = parse_ansource(ay_file)
-                st.session_state[vs_key] = parse_vendor(vs_file)
+                if is_rakuten:
+                    st.session_state[vs_key] = parse_vendor_rakuten(vs_file)
+                else:
+                    st.session_state[vs_key] = parse_vendor(vs_file)
             except Exception as e:
                 st.error(f'檔案讀取失敗：{e}')
                 return
@@ -51,9 +57,11 @@ def main_page():
     if st.button('🔍 開始比對', type='primary'):
         with st.spinner('比對中...'):
             ticket_map = TICKET_MAPS[team]
+            ay_area_fn = _canon_area_rakuten_ay if is_rakuten else None
             st.session_state['compare_result'] = compare(
                 ay_data[ay_choice], vs_data[vs_choice],
                 ticket_map=ticket_map,
+                ay_area_map=ay_area_fn,
             )
     if 'compare_result' in st.session_state:
         _show_results(st.session_state['compare_result'])

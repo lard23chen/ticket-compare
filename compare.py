@@ -1,3 +1,4 @@
+import re
 import pandas as pd
 from io import BytesIO
 from openpyxl import Workbook
@@ -31,10 +32,40 @@ TICKET_MAP_LIONS = {
     '外野記者票':           '記者票',
 }
 
+# ── 樂天桃猿票種 ───────────────────────────────────────────
+TICKET_MAP_RAKUTEN_WEEKDAY = {
+    '尊猿門票':         '尊猿門票',
+    '內野門票':         '內野門票',
+    '內野全票':         '內野全票',
+    '內野半票':         '內野半票',
+    '外野門票':         '外野門票',
+    '快樂炒門票':       '快樂炒門票',
+    '大樂票':           '大樂票',
+    '寵物樂園票':       '寵物樂園票',
+    '身心障礙票.':      '身心障礙票',
+    '身心障礙陪同票.':  '身心障礙陪同票',
+    '貴賓票':           '貴賓票',
+}
+
+TICKET_MAP_RAKUTEN_HOLIDAY = {
+    '尊猿門票．':       '尊猿門票',
+    '內野門票．':       '內野門票',
+    '內野全票．':       '內野全票',
+    '內野半票．':       '內野半票',
+    '外野門票．':       '外野門票',
+    '快樂炒門票．':     '快樂炒門票',
+    '大樂票．':         '大樂票',
+    '寵物樂園票．':     '寵物樂園票',
+    '身心障礙票.':      '身心障礙票',
+    '身心障礙陪同票.':  '身心障礙陪同票',
+}
+
 # ── 各球隊 MAP 總表（新增球隊在此擴充）─────────────────
 TICKET_MAPS = {
-    '統一獅':   TICKET_MAP_LIONS,
-    '通用':     TICKET_MAP_BASE,
+    '統一獅':           TICKET_MAP_LIONS,
+    '樂天桃猿(平日)':   TICKET_MAP_RAKUTEN_WEEKDAY,
+    '樂天桃猿(假日)':   TICKET_MAP_RAKUTEN_HOLIDAY,
+    '通用':             TICKET_MAP_BASE,
 }
 
 # 向後相容
@@ -120,6 +151,144 @@ def parse_vendor(file) -> dict:
     return result
 
 
+def _extract_price(s) -> int | None:
+    """從字串中提取第一個整數票價，無效值回傳 None。"""
+    s = str(s).strip() if s is not None and not (isinstance(s, float) and pd.isna(s)) else ''
+    if s in ('X', 'x', '-', 'nan', 'NaN', ''):
+        return None
+    m = re.search(r'\d+', s)
+    return int(m.group()) if m else None
+
+
+def _pairs(price_cell, ticket_cell, last_ticket: str | None = None) -> list[tuple[str, int]]:
+    """解析多行複合儲存格，回傳 [(ticket_name, price), ...]。"""
+    p = str(price_cell).strip() if pd.notna(price_cell) else ''
+    t_raw = str(ticket_cell).strip() if pd.notna(ticket_cell) and str(ticket_cell).strip() not in ('nan', 'NaN', '') else ''
+    pl = [l.strip() for l in p.split('\n') if l.strip()]
+    tl = [l.strip() for l in t_raw.split('\n') if l.strip()]
+    if not tl and last_ticket:
+        tl = [last_ticket]
+    out = []
+    for i, pline in enumerate(pl):
+        price = _extract_price(pline)
+        if price is None:
+            continue
+        if tl:
+            ticket = tl[i] if i < len(tl) else tl[0]
+        else:
+            ticket = ('內野全票' if '全票' in pline else ('內野半票' if '半票' in pline else None))
+        if ticket:
+            out.append((ticket, price))
+    return out
+
+
+def _canon_area_rakuten_vendor(main_area, sub_area) -> str:
+    """廠商 Excel 區域欄位 → 統一區域名稱。"""
+    m = re.sub(r'\n.*', '', str(main_area or '')).strip()
+    m = re.sub(r'[A-Za-z].*', '', m).strip()
+    m = re.sub(r'[※*].*', '', m).strip()
+    s = str(sub_area or '').strip()
+    if '尊猿席' in m:
+        return '尊猿席'
+    if m in ('東西下', '東下', '西下'):
+        if re.search(r'^[AB]', s):
+            return '東西下(AB)'
+        if 'DE' in s and '前' in s:
+            return '東西下(DE熱)'
+        if 'CFG' in s or ('13' in s and '後' in s):
+            return '東西下(CFG)'
+        if re.search(r'^[H-M]', s):
+            return '東下' if m != '西下' else '西下'
+        if s == 'R':
+            return '東西下(R)'
+        return m
+    if m == '東西上':
+        return '東西上'
+    if '外野' in m and '大樂' not in m:
+        return '外野'
+    if '大樂' in m:
+        return '大樂放鬆區'
+    if '快樂炒' in m:
+        return '快樂炒'
+    if '團猿席' in m:
+        return '東下團猿席'
+    if '上層' in m:
+        return '上層團猿席'
+    if '寵物' in m:
+        return '寵物樂園'
+    return m or '?'
+
+
+def _canon_area_rakuten_ay(area: str) -> str | None:
+    """安源 Excel 區域欄位 → 統一區域名稱（回傳 None 表示跳過此列）。"""
+    a = str(area or '').strip()
+    if '尊猿席' in a:
+        return '尊猿席'
+    if '熱力應援' in a:
+        return '東西下(DE熱)'
+    if re.fullmatch(r'[東西]下[AB]區', a):
+        return '東西下(AB)'
+    if re.fullmatch(r'[東西]下[CDEFG]區', a):
+        return '東西下(CFG)'
+    if re.fullmatch(r'東下[H-M]區', a):
+        return '東下'
+    if re.fullmatch(r'西下[H-K]區', a):
+        return '西下'
+    if re.fullmatch(r'[東西]上[A-M]區', a):
+        return '東西上'
+    if re.search(r'[東西]R\d', a) or 'DAZN' in a:
+        return '東西下(R)'
+    if '右外野' in a or '左外野' in a:
+        return '外野'
+    if '外野' in a:
+        return '外野'
+    if '大樂' in a:
+        return '大樂放鬆區'
+    if '快樂炒' in a:
+        return '快樂炒'
+    if '輪椅' in a:
+        return None  # 輪椅席不納入比對
+    return a
+
+
+def parse_vendor_rakuten(file) -> dict:
+    """讀取樂天廠商 .xlsx，回傳 {sheet_name: DataFrame(area, ticket_vs, ticket_std, price)}"""
+    xl = pd.ExcelFile(file, engine='openpyxl')
+    result = {}
+    for sheet in xl.sheet_names:
+        if '票價' not in sheet:
+            continue
+        raw = pd.read_excel(file, sheet_name=sheet, engine='openpyxl', header=None)
+
+        rows = []
+        last_ticket = None
+        for _, row in raw.iterrows():
+            main_area = row.iloc[0] if len(row) > 0 else None
+            sub_area  = row.iloc[1] if len(row) > 1 else None
+            price_cell  = row.iloc[2] if len(row) > 2 else None
+            ticket_cell = row.iloc[3] if len(row) > 3 else None
+
+            if pd.isna(main_area) and pd.isna(sub_area):
+                continue
+            if _extract_price(price_cell) is None and not str(price_cell).strip():
+                continue
+
+            canon_area = _canon_area_rakuten_vendor(main_area, sub_area)
+            pairs = _pairs(price_cell, ticket_cell, last_ticket)
+            if pairs:
+                last_ticket = pairs[-1][0]
+            for ticket, price in pairs:
+                rows.append({'area': canon_area, 'ticket_vs': ticket,
+                             'ticket_std': ticket, 'price': price})
+
+        if rows:
+            df = pd.DataFrame(rows)
+            df['price'] = df['price'].astype(int)
+            df = df[df['price'] > 0].drop_duplicates()
+            result[sheet] = df
+    return result
+
+
 def compare(
     df_ay: pd.DataFrame,
     df_vs: pd.DataFrame,
@@ -143,9 +312,13 @@ def compare(
     # 安源票種標準化
     df_ay['ticket_std'] = df_ay['ticket'].map(ticket_map)
 
-    # 安源區域對應（多對一：巨浪席1/2/3 → 巨浪席）
+    # 安源區域對應（支援 dict 或 callable；callable 回傳 None 表示跳過）
     if ay_area_map:
-        df_ay['area'] = df_ay['area'].map(lambda a: ay_area_map.get(a, a))
+        if callable(ay_area_map):
+            df_ay['area'] = df_ay['area'].map(ay_area_map)
+            df_ay = df_ay[df_ay['area'].notna()]
+        else:
+            df_ay['area'] = df_ay['area'].map(lambda a: ay_area_map.get(a, a))
 
     ay_m = (df_ay[df_ay['ticket_std'].notna()]
             [['area', 'ticket', 'ticket_std', 'price']]
