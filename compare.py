@@ -99,10 +99,32 @@ def parse_vendor(file) -> dict:
     return result
 
 
-def compare(df_ay: pd.DataFrame, df_vs: pd.DataFrame) -> dict:
-    """比對安源與廠商資料，回傳分類結果 dict"""
+def compare(
+    df_ay: pd.DataFrame,
+    df_vs: pd.DataFrame,
+    ticket_map: dict | None = None,
+    ay_area_map: dict | None = None,
+) -> dict:
+    """比對安源與廠商資料，回傳分類結果 dict。
+
+    Args:
+        df_ay:        安源 DataFrame，欄位: area, ticket, price
+        df_vs:        廠商 DataFrame，欄位: area, ticket_vs, ticket_std, price
+        ticket_map:   {安源票種 → ticket_std}；None 時使用預設 TICKET_MAP
+        ay_area_map:  {安源area → 廠商area key}；None 時不做區域轉換
+    """
+    if ticket_map is None:
+        ticket_map = TICKET_MAP
+
     df_ay = df_ay.copy()
-    df_ay['ticket_std'] = df_ay['ticket'].map(TICKET_MAP)
+    df_vs = df_vs.copy()
+
+    # 安源票種標準化
+    df_ay['ticket_std'] = df_ay['ticket'].map(ticket_map)
+
+    # 安源區域對應（多對一：巨浪席1/2/3 → 巨浪席）
+    if ay_area_map:
+        df_ay['area'] = df_ay['area'].map(lambda a: ay_area_map.get(a, a))
 
     ay_m = (df_ay[df_ay['ticket_std'].notna()]
             [['area', 'ticket', 'ticket_std', 'price']]
